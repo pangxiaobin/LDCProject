@@ -1,0 +1,4 @@
+[tool.aerich]
+tortoise_orm = "db.database.TORTOISE_ORM_MIGRATE"
+location = "./migrations"
+src_folder = "./."

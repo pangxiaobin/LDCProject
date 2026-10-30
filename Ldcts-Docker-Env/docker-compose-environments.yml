@@ -1,0 +1,107 @@
+version: "3"
+
+networks:
+  # 自定义网络(默认桥接)
+  ldcts_dose_network:
+    driver: bridge
+
+services:
+  redis:
+    image: ldcts-redis:v1
+    build: ./compose/redis
+    container_name: redis
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    volumes:
+      - ./volumes/var/redis-data:/data
+      - ./volumes/var/redis:/usr/local/etc/redis
+    networks:
+      - ldcts_dose_network
+    restart: unless-stopped
+
+  mysql-db:
+    image: mysql:8.2.0
+    container_name: mysql-db
+    command: --default-authentication-plugin=caching_sha2_password
+
+    networks:
+      - ldcts_dose_network
+    env_file:
+      - .env
+    environment:
+      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD}
+      - MYSQL_DATABASE=${MYSQL_DATABASE}
+      - MYSQL_USER=${MYSQL_USER}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD}
+    healthcheck: # 健康检查
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      timeout: 20s
+      retries: 10
+      start_period: 30s
+    ports:
+      - "3307:3306"
+    volumes:
+      - ./volumes/mysql_db:/var/lib/mysql
+      - ./volumes/var/mysql:/etc/mysql/conf.d
+    restart: unless-stopped
+
+  nginx:
+    image: ldcts-nginx:v1
+    build: ./compose/nginx
+    container_name: nginx
+    networks:
+      - ldcts_dose_network
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./volumes/front_end:/var/www/front_end
+      - ./volumes/var/nginx:/etc/nginx/conf.d
+      - ./volumes/var/ssl:/usr/share/nginx/ssl
+      - ./volumes/var/png:/var/www/png
+
+    restart: unless-stopped
+    depends_on:
+      - web
+  web:
+    image: ldcts-web:v1
+    build: ./compose/ldcts_server
+    container_name: ldcts-web
+    expose:
+      - "8010"
+    env_file:
+      - .env
+    volumes:
+      - ./volumes/server/ldcts:/var/app # 挂载项目代码
+      - ./volumes/var/png:/var/www/png
+    networks:
+      - ldcts_dose_network
+    depends_on:
+      - mysql-db
+    restart: always
+    tty: true
+    stdin_open: true
+    command: /bin/bash /var/app/LdctsBackend/start.sh
+  # 定时任务
+  celery:
+    image: ldcts-web:v1
+    container_name: ldcts-celery
+    env_file:
+      - .env
+    volumes:
+      - ./volumes/server/ldcts:/var/app # 挂载项目代码
+      - ./volumes/var/png:/var/www/png
+    networks:
+      - ldcts_dose_network
+    depends_on:
+      - web
+      - redis
+    restart: always
+    tty: true
+    stdin_open: true
+    command: "celery -A workers.celery_app worker -l info -c 3"
